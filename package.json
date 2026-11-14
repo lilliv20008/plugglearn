@@ -1,0 +1,14 @@
+{
+  "name": "plugglearn",
+  "version": "1.0.0",
+  "private": true,
+  "description": "插头学堂 · 学习通网课托管工作台（个人使用，可选客户前台）",
+  "type": "commonjs",
+  "main": "server.js",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node --no-warnings server.js",
+    "dev": "node --no-warnings --watch server.js"
+  },
+  "dependencies": {}
+}

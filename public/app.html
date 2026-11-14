@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>插头学堂 · 客户中心</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<style>
+  .portal { max-width: 720px; margin: 0 auto; padding: 40px 20px 80px; }
+  .portal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 26px; }
+  .order-card { padding: 18px 20px; margin-bottom: 12px; }
+  .order-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+</style>
+</head>
+<body>
+
+<div class="gate" id="gate" hidden>
+  <form class="gate-card" id="gateForm">
+    <div class="brand">
+      <svg viewBox="0 0 48 48" class="brand-mark" aria-hidden="true">
+        <rect x="4" y="4" width="40" height="40" rx="12" fill="#FA2D48"/>
+        <path d="M18 14v10a6 6 0 0 0 12 0V14" stroke="#fff" stroke-width="3.2" fill="none" stroke-linecap="round"/>
+        <path d="M24 30v6" stroke="#fff" stroke-width="3.2" stroke-linecap="round"/>
+      </svg>
+      <div><div class="brand-name">插头学堂</div><div class="brand-sub">Client Center</div></div>
+    </div>
+    <h1 id="gateTitle">登录</h1>
+    <p class="gate-hint" id="gateHint">提交学习通账号，查看你的刷课进度。</p>
+    <label class="field"><span>邮箱</span><input type="email" id="gEmail" required placeholder="you@example.com"></label>
+    <label class="field"><span>密码</span><input type="password" id="gPass" required placeholder="至少 8 位"></label>
+    <button class="btn primary block" type="submit" id="gSubmit">登录</button>
+    <p class="row" style="justify-content:center;margin-top:14px">
+      <button type="button" class="btn ghost tiny" id="gToggle">没有账号？注册</button>
+    </p>
+    <p class="gate-error" id="gError" hidden></p>
+  </form>
+</div>
+
+<div class="portal" id="portal" hidden>
+  <div class="portal-head">
+    <div class="brand">
+      <svg viewBox="0 0 48 48" class="brand-mark" aria-hidden="true">
+        <rect x="4" y="4" width="40" height="40" rx="12" fill="#FA2D48"/>
+        <path d="M18 14v10a6 6 0 0 0 12 0V14" stroke="#fff" stroke-width="3.2" fill="none" stroke-linecap="round"/>
+        <path d="M24 30v6" stroke="#fff" stroke-width="3.2" stroke-linecap="round"/>
+      </svg>
+      <div><div class="brand-name">插头学堂</div><div class="brand-sub" id="whoami"></div></div>
+    </div>
+    <button class="btn ghost tiny" id="logout">退出</button>
+  </div>
+
+  <div class="card pad" id="submitCard" style="margin-bottom:22px">
+    <div style="font-weight:640;margin-bottom:4px">提交新任务</div>
+    <div class="small muted" style="margin-bottom:14px">粘贴学习通 Cookie 即可托管；提交后由工作台受理并开始执行。</div>
+    <div class="form-row">
+      <label class="field"><span>备注名</span><input id="o_label" placeholder="张三 · 2024级"></label>
+      <label class="field"><span>倍速</span><input id="o_speed" type="number" min="1" max="4" step="0.5" value="1.5"></label>
+    </div>
+    <label class="field"><span>学习通 Cookie</span><textarea id="o_cookie" class="mono" placeholder="_uid=...; fid=...; _d=..."></textarea></label>
+    <label class="field"><span>备注（可选）</span><input id="o_note" placeholder="希望 3 天内完成"></label>
+    <button class="btn primary" id="o_submit">提交</button>
+  </div>
+
+  <div id="orders"></div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ORDER = { pending: ['等待受理', 'warn'], active: ['执行中', 'info'], done: ['已完成', 'ok'], closed: ['已关闭', 'dim'] };
+
+async function api(path, { method = 'GET', body } = {}) {
+  const res = await fetch(path, { method, headers: body ? { 'Content-Type': 'application/json' } : undefined, body: body ? JSON.stringify(body) : undefined, credentials: 'same-origin' });
+  let data = null; try { data = await res.json(); } catch {}
+  if (!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status));
+  return data;
+}
+function toast(msg, err) {
+  const t = $('#toast'); t.textContent = msg; t.className = 'toast show' + (err ? ' err' : ''); t.hidden = false;
+  clearTimeout(toast._t); toast._t = setTimeout(() => { t.className = 'toast'; t.hidden = true; }, 2600);
+}
+
+let mode = 'login';
+$('#gToggle').onclick = (e) => {
+  e.preventDefault();
+  mode = mode === 'login' ? 'signup' : 'login';
+  $('#gateTitle').textContent = mode === 'login' ? '登录' : '注册';
+  $('#gSubmit').textContent = mode === 'login' ? '登录' : '注册并进入';
+  $('#gToggle').textContent = mode === 'login' ? '没有账号？注册' : '已有账号？登录';
+};
+
+$('#gateForm').onsubmit = async (e) => {
+  e.preventDefault();
+  $('#gError').hidden = true;
+  try {
+    await api(mode === 'login' ? '/api/login' : '/api/client/signup', { method: 'POST', body: { email: $('#gEmail').value.trim(), password: $('#gPass').value } });
+    start();
+  } catch (ex) { $('#gError').textContent = ex.message; $('#gError').hidden = false; }
+};
+
+$('#logout').onclick = async () => { await api('/api/logout', { method: 'POST' }); location.reload(); };
+
+$('#o_submit').onclick = async () => {
+  try {
+    await api('/api/client/orders', { method: 'POST', body: {
+      label: $('#o_label').value.trim(),
+      cookie: $('#o_cookie').value.trim(),
+      speed: Number($('#o_speed').value),
+      note: $('#o_note').value.trim(),
+    } });
+    $('#o_label').value = ''; $('#o_cookie').value = ''; $('#o_note').value = '';
+    toast('已提交，等待受理');
+    loadOrders();
+  } catch (e) { toast(e.message, true); }
+};
+
+async function loadOrders() {
+  const rows = await api('/api/client/orders');
+  $('#orders').innerHTML = rows.length ? rows.map((o) => {
+    const [label, cls] = ORDER[o.status] || [o.status, 'dim'];
+    const pct = o.total ? Math.round((o.done / o.total) * 100) : 0;
+    return `<div class="card order-card">
+      <div class="order-top">
+        <div><b>${esc(o.title)}</b><div class="small muted">${esc(o.account_label || '')} · 提交于 ${new Date(o.created_at).toLocaleString('zh-CN')}</div></div>
+        <span class="pill ${cls}">${label}</span>
+      </div>
+      <div style="margin-top:12px"><div class="bar ${o.status === 'done' ? 'done' : ''}"><i style="width:${pct}%"></i></div>
+      <div class="small muted" style="margin-top:6px">${o.done}/${o.total} 个任务点完成 · ${pct}%</div></div>
+    </div>`;
+  }).join('') : '<div class="card"><div class="empty"><div class="empty-title">还没有提交记录</div>上面的表单提交一次就能看到进度</div></div>';
+}
+
+async function start() {
+  const boot = await api('/api/bootstrap');
+  if (!boot.user) { $('#gate').hidden = false; $('#portal').hidden = true; return; }
+  $('#gate').hidden = true; $('#portal').hidden = false;
+  $('#whoami').textContent = boot.user.email;
+  if (boot.user.role === 'admin') {
+    $('#submitCard').hidden = true;
+    $('#orders').innerHTML = `<div class="card" style="padding:36px;text-align:center">
+      <div class="empty-title">这是客户前台</div>
+      <div class="small muted" style="margin-top:8px">当前登录的是管理员账号，请回到 <a href="/" style="color:var(--accent)">工作台</a> 管理账号、计划与任务。</div></div>`;
+    return;
+  }
+  $('#submitCard').hidden = false;
+  loadOrders();
+}
+start().catch(() => { $('#gate').hidden = false; });
+setInterval(() => { if (!$('#portal').hidden) loadOrders().catch(() => {}); }, 10000);
+</script>
+</body>
+</html>

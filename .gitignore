@@ -1,0 +1,23 @@
+﻿# 运行时数据（含学习通 Cookie、SQLite 库、浏览器 profile）
+data/
+*.db
+*.db-wal
+*.db-shm
+server.log
+*.log
+
+# 依赖与构建产物
+node_modules/
+chrome/
+browsers/
+
+# 截图与二维码（本地产物）
+shots/
+qr-*.png
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
