@@ -55,7 +55,19 @@
     <div class="small muted" style="margin-bottom:14px">粘贴学习通 Cookie 即可托管；提交后由工作台受理并开始执行。</div>
     <div class="form-row">
       <label class="field"><span>备注名</span><input id="o_label" placeholder="张三 · 2024级"></label>
-      <label class="field"><span>倍速</span><input id="o_speed" type="number" min="1" max="4" step="0.5" value="1.5"></label>
+      <label class="field"><span>倍速</span><input id="o_speed" type="number" min="1" max="4" step="0.5" value="1"></label>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin:-4px 0 12px">
+      <button class="btn ghost tiny" id="o_qr" type="button">扫码登录学习通</button>
+      <span class="small muted" id="o_qr_hint">扫码后 Cookie 会自动填进去，比自己抓包省事</span>
+    </div>
+    <div id="o_qr_panel" hidden style="display:flex;gap:16px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <div class="qr-box"><img class="qr-img" id="o_qr_img" alt="学习通登录二维码"><div class="qr-mask" id="o_qr_mask"></div></div>
+      <div style="min-width:180px">
+        <div class="qr-state" id="o_qr_state">正在生成二维码…</div>
+        <div class="small muted" style="margin-top:6px">用学习通 App 扫这个码，确认后自动填入</div>
+        <button class="btn ghost tiny" id="o_qr_cancel" type="button" style="margin-top:10px">取消</button>
+      </div>
     </div>
     <label class="field"><span>学习通 Cookie</span><textarea id="o_cookie" class="mono" placeholder="_uid=...; fid=...; _d=..."></textarea></label>
     <label class="field"><span>备注（可选）</span><input id="o_note" placeholder="希望 3 天内完成"></label>
@@ -102,6 +114,53 @@ $('#gateForm').onsubmit = async (e) => {
 };
 
 $('#logout').onclick = async () => { await api('/api/logout', { method: 'POST' }); location.reload(); };
+
+/* 扫码登录学习通：拿 Cookie 自动填表 */
+let qrTimer = null;
+let qrUuid = null;
+function qrStop() {
+  if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
+  $('#o_qr_panel').hidden = true;
+}
+async function qrStart() {
+  qrStop();
+  $('#o_qr_panel').hidden = false;
+  $('#o_qr_mask').style.display = 'none';
+  $('#o_qr_state').textContent = '正在生成二维码…';
+  $('#o_qr_hint').textContent = '扫码后 Cookie 会自动填进去';
+  let out;
+  try { out = await api('/api/client/qr/start', { method: 'POST' }); }
+  catch (e) { $('#o_qr_state').textContent = e.message; return; }
+  $('#o_qr_img').src = out.image;
+  qrUuid = out.uuid;
+  $('#o_qr_state').textContent = '请用学习通 App 扫码';
+  qrTimer = setInterval(async () => {
+    let r;
+    try { r = await api('/api/client/qr/' + out.uuid); } catch (e) { qrStop(); toast(e.message, true); return; }
+    if (r.state === 'waiting') { $('#o_qr_state').textContent = '等待扫码…'; return; }
+    if (r.state === 'scanned') { $('#o_qr_state').textContent = '已扫到，请在手机上确认'; return; }
+    if (r.state === 'ok') {
+      $('#o_cookie').value = r.cookie || '';
+      if (!$('#o_label').value && r.nickname) $('#o_label').value = r.nickname;
+      $('#o_qr_state').textContent = '登录成功' + (r.nickname ? '（' + r.nickname + '）' : '') + '，Cookie 已填入';
+      $('#o_qr_mask').style.display = 'block';
+      clearInterval(qrTimer); qrTimer = null;
+      toast('已填入学习通 Cookie');
+      return;
+    }
+    if (r.state === 'expired') { qrStop(); $('#o_qr_hint').textContent = '二维码过期了，再点一次'; return; }
+    if (r.state === 'cancelled') { qrStop(); return; }
+    if (r.state === 'twofactor') { $('#o_qr_state').textContent = '该账号开了二次验证，请在手机上完成'; return; }
+    if (r.state === 'error') { qrStop(); $('#o_qr_hint').textContent = r.note || '扫码失败，再试一次'; return; }
+  }, 2000);
+}
+$('#o_qr').onclick = () => qrStart();
+$('#o_qr_cancel').onclick = async () => {
+  const id = qrUuid;
+  qrStop(); qrUuid = null;
+  $('#o_qr_hint').textContent = '扫码后 Cookie 会自动填进去，比自己抓包省事';
+  if (id) api('/api/client/qr/' + id + '/close', { method: 'POST' }).catch(() => {});
+};
 
 $('#o_submit').onclick = async () => {
   try {

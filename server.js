@@ -788,6 +788,35 @@ route('POST', /^\/api\/client\/signup$/, async (req, res, params, body) => {
   }
 });
 
+/* 客户前台的扫码登录：客户自己扫一次学习通，Cookie 自动填进下单表单 */
+
+route('POST', /^\/api\/client\/qr\/start$/, async (req, res) => {
+  const user = requireUser(req, res);
+  if (!user) return;
+  try {
+    sendJSON(res, 200, await qrLogin.startQr());
+  } catch (e) {
+    sendJSON(res, 500, { error: '生成二维码失败：' + e.message });
+  }
+});
+
+route('GET', /^\/api\/client\/qr\/([0-9a-f]{32})$/, async (req, res, params) => {
+  const user = requireUser(req, res);
+  if (!user) return;
+  try {
+    sendJSON(res, 200, await qrLogin.pollQr(params[0]));
+  } catch (e) {
+    sendJSON(res, 500, { error: e.message });
+  }
+});
+
+route('POST', /^\/api\/client\/qr\/([0-9a-f]{32})\/close$/, (req, res, params) => {
+  const user = requireUser(req, res);
+  if (!user) return;
+  qrLogin.drop(params[0]);
+  sendJSON(res, 200, { ok: true });
+});
+
 route('GET', /^\/api\/client\/orders$/, (req, res) => {
   const user = requireUser(req, res);
   if (!user) return;
