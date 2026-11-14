@@ -17,14 +17,6 @@
 
 细节见 [DEPLOY.md](DEPLOY.md)。
 
----|---|
-| 工作台 | https://your-host.example.com/ |
-| 客户前台 | https://your-host.example.com/app |
-| 主机 | 阿里云 一台 ECS（Windows Server 2022，与 EasyRun 同机） |
-| 端口 | 8710（本机回环），对外由 Caddy 终结 TLS 走 443 |
-
-证书由 Caddy 自动申请续期（Let's Encrypt），详见 [DEPLOY.md](DEPLOY.md) 的「HTTPS 入口」一节。
-
 ---
 
 ## 1. 快速开始
