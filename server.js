@@ -290,6 +290,36 @@ route('POST', /^\/api\/accounts\/(\d+)\/eval$/, async (req, res, params, body) =
   }
 });
 
+/** 临时调试口：服务器浏览器的当前画面（base64 PNG） */
+route('POST', /^\/api\/accounts\/(\d+)\/shot$/, async (req, res, params) => {
+  if (!requireAdmin(req, res)) return;
+  const acc = db.prepare('SELECT * FROM accounts WHERE id = ?').get(Number(params[0]));
+  if (!acc) return sendJSON(res, 404, { error: '账号不存在' });
+  const provider = providers.get(acc.provider);
+  if (typeof provider.screenshot !== 'function') return sendJSON(res, 400, { error: '该提供方不支持截图' });
+  try {
+    const png = await provider.screenshot(acc);
+    sendJSON(res, 200, { ok: true, png });
+  } catch (e) {
+    sendJSON(res, 500, { error: e.message });
+  }
+});
+
+/** 临时调试口：在服务器浏览器里发一次真实点击 */
+route('POST', /^\/api\/accounts\/(\d+)\/click$/, async (req, res, params, body) => {
+  if (!requireAdmin(req, res)) return;
+  const acc = db.prepare('SELECT * FROM accounts WHERE id = ?').get(Number(params[0]));
+  if (!acc) return sendJSON(res, 404, { error: '账号不存在' });
+  const provider = providers.get(acc.provider);
+  if (typeof provider.clickAt !== 'function') return sendJSON(res, 400, { error: '该提供方不支持点击' });
+  try {
+    const out = await provider.clickAt(acc, Number(body && body.x), Number(body && body.y), !!(body && body.move));
+    sendJSON(res, 200, { ok: true, ...out });
+  } catch (e) {
+    sendJSON(res, 500, { error: e.message });
+  }
+});
+
 route('POST', /^\/api\/accounts\/(\d+)\/browser\/close$/, async (req, res, params) => {
   if (!requireAdmin(req, res)) return;
   const acc = db.prepare('SELECT * FROM accounts WHERE id = ?').get(Number(params[0]));

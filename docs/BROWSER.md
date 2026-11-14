@@ -231,3 +231,22 @@ https://mooc1.chaoxing.com/antispiderShowVerify.ac
 - 开关与次数在设置页，接口是 `GET/POST /api/captcha`、`POST /api/captcha/test`、`POST /api/accounts/:id/captcha`（手动点「过验证」）、`POST /api/captcha/resolve`（人工输入）。
 - 起 OCR 服务：`pip install ddddocr` 后 `python tools/ocr_server.py 8899`，`GET /health` 回 `{"ok":true,"engine":"ddddocr"}`；服务器上已注册成开机任务 `plugglearn-ocr`（SYSTEM）。
 - 只有这一层也过不去（比如账号已被要求短信验证）才会照旧抛「超星要求人工验证」，队列自动暂停。
+
+## 13. 为什么任务显示「已完成」而学习通没记上（v0.3 修复）
+
+上一版出现「工作台里 96 条全绿、学习通 App 只算 1/22」，根因有五个，全部已改：
+
+| 假完成路径 | 旧行为 | 现在 |
+| --- | --- | --- |
+| 章节默认停在「学习目标」标签 | 页面里没有 `<video>`，空转 6 拍就当成功 | 先点「视频」标签（`OPEN_PLAYER`）把播放器调出来，调不出来直接抛错 |
+| 播放器被程序暂停 | `video.play()` 一秒内被播放器 `pause()`，`t` 停在 1，空转记完成 | 用 CDP `Input.dispatchMouseEvent` 在播放器中心发**真实点击**，播放器才认 |
+| 闲置弹窗 | 播放器闲置会弹「继续学习」（`a[onclick*="continue_learning"]`），视频停住 | 每 9 秒发一次 `mouseMoved` 心跳（模拟人还在），真弹出来就点掉 |
+| 播完/换节/25 分钟兜底 | 直接 `break` 记完成 | 一律走 `confirmDone()`：回章节列表看 `div.chapter_item[id="cur<kid>"] .catalog_state` 有没有 `icon_yiwanc`（绿勾），没有就重开重播，最多 3 次 |
+| 时长没到 90% | `currentTime` 到 `duration-1.2` 就记完成 | 学习通要求「观看时长 ≥ 总时长的 90%」，播到 288/289s 才算，页面自己也会显示进度条 |
+
+要点：
+
+- **倍速**：学习通按墙钟校验观看时长，`speed` 调到 3 时会被踢到 9010 验证页，1.5x 也可能不计数。默认建议 `speed: 1`；要快就加账号并发，别叠加倍速。
+- **判定只看学习通**：`confirmDone()` 是唯一出口，所有「看起来完成了」的分支都要先过这道核对。
+- **假完成要重跑**：`POST /api/tasks/:id/retry` 把任务打回 pending；存量里 25 分钟出头、时长只有十几秒的记录基本都是旧逻辑留下的假完成。
+- 章节里没有视频的任务点（阅读、讨论、测验）会抛「这一节没有可播放的视频/音频任务点」，交给人处理，不再混进 completed。
