@@ -204,7 +204,14 @@ https://mooc1.chaoxing.com/antispiderShowVerify.ac
 【9010】操作异常，请输入图片中的验证码
 ```
 
-这是个 4 位图片验证码（`/processVerifyPng.ac?t=...` → 表单 GET `/html/processVerify.ac?app=0&ucode=XXXX`）。
+这是个图片验证码（`/processVerifyPng.ac?t=...` → 表单 GET `/html/processVerify.ac?app=0&ucode=XXXX`）。
+
+**位数不写死**：超星不同入口给的位数不一样，切格按这个顺序决定：
+1. 页面输入框 `#ucode` 的 `maxlength`（超星自己的位数声明，最可靠，当前是 4）；
+2. 没有 maxlength 就按列投影切出来的段数（3–8）；
+3. 字符粘连时按「段宽 ÷ 中位字宽」估每个段里塞了几个字；
+4. 万一切错了，外部 OCR/人工给出答案后会按答案位数**重切一次**（`captcha.extract(br, n)` 会写 `window.__capForce`），样本按新格子入库。
+提交端也放宽到 3–8 位（`MIN_LEN=3 / MAX_LEN=8`），字形库按「格子数 = 答案长度」分槽存，4 位和 6 位样本互不干扰。
 处理方式：
 
 - 代码里已经识别这个页面，抛 `超星要求人工验证（反爬验证页）`，并把**整个队列自动暂停**，不会一路烧任务；

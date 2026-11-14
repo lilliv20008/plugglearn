@@ -403,7 +403,7 @@ route('POST', /^\/api\/captcha\/resolve$/, async (req, res, params, body) => {
   if (!requireAdmin(req, res)) return;
   const id = Number(body && body.id);
   const code = String((body && body.code) || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
-  if (code.length !== 4) return sendJSON(res, 400, { error: '验证码是 4 位字母或数字' });
+  if (code.length < 3 || code.length > 8) return sendJSON(res, 400, { error: '按图里的位数输入（3–8 位字母或数字）' });
   const pend = captcha.listPending().find((p) => p.id === id);
   if (!pend) return sendJSON(res, 404, { error: '这条待输入已经过期，等下次风控再试' });
   const acc = accById(pend.accountId);

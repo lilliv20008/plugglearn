@@ -211,6 +211,7 @@ plugglearn/
   | 模拟环境 | 不联网，跑流程用 |
 - 题库：`/api/quiz`，缺题自动记录在 `quiz_misses`，补一次答案就进库。
 - **自动过验证**：被超星 9010 风控拦到图片验证码时，先查本地字形库（每次成功都回流样本），再用外部 OCR（自带 `tools/ocr_server.py`，包 ddddocr），都不行才登记人工输入。开关与次数在「设置 → 反爬验证」。
+- 验证码**位数自适应 3–8 位**（读页面 `#ucode` 的 maxlength，切格按段宽估算，答错位数会按 OCR 结果重切），不是只认 4 位。
 - 细节见 [docs/QUIZ.md](docs/QUIZ.md)（扫码链路）与 [docs/BROWSER.md](docs/BROWSER.md)（浏览器路线、选择器、第 12 节讲验证码）。
 
 ## 手机端

@@ -857,7 +857,7 @@ async function renderSettings() {
       box.innerHTML = r.pending.map((p) => `
         <div class="cap-item" data-cap-id="${p.id}">
           <img src="${p.dataUrl}" alt="验证码">
-          <input class="cap-input" maxlength="4" placeholder="4 位" autocomplete="off">
+          <input class="cap-input" maxlength="8" placeholder="照图输入" autocomplete="off" autocapitalize="characters" spellcheck="false">
           <button class="btn tiny" data-cap="${p.id}">提交</button>
           <button class="btn tiny ghost" data-capdrop="${p.id}">忽略</button>
           <div class="small muted cap-note">${esc(p.note || '')}</div>
@@ -866,7 +866,7 @@ async function renderSettings() {
         b.onclick = async () => {
           const item = b.closest('.cap-item');
           const code = (item.querySelector('.cap-input').value || '').trim().toUpperCase();
-          if (code.length !== 4) return toast('要 4 位字母或数字', true);
+          if (code.length < 3 || code.length > 8) return toast('按图里的位数输入（3–8 位字母或数字）', true);
           try {
             const out = await api('/api/captcha/resolve', { method: 'POST', body: { id: Number(b.dataset.cap), code } });
             toast(out.ok ? '验证通过，样本已入库' : (out.note || '没通过'), !out.ok);
