@@ -234,3 +234,32 @@ C:\Caddy\caddy.exe validate --config C:\Caddy\Caddyfile --adapter caddyfile   # 
 后台服务在 session 0 里，**Edge 起不来**（秒退 code 1002），要换成 Chrome for Testing 并关沙箱。
 完整做法见 `docs/BROWSER.md` 第 8 节；线上已经这么配好了
 （`C:\plugglearn\chrome\chrome-win64\chrome.exe`，`Browser.launch()` 默认 `--no-sandbox`）。
+
+## 可选：反爬验证的 OCR 服务（ddddocr）
+
+Windows 上装一套：
+
+```powershell
+# 1) 装 Python（华为镜像快）
+Invoke-WebRequest https://mirrors.huaweicloud.com/python/3.11.9/python-3.11.9-amd64.exe -OutFile $env:TEMP\py.exe
+Start-Process $env:TEMP\py.exe -ArgumentList '/quiet','InstallAllUsers=1','PrependPath=1','Include_pip=1' -Wait
+
+# 2) 装 ddddocr
+& 'C:\Program Files\Python311\python.exe' -m pip install ddddocr -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+# 3) 开机自启（SYSTEM，和 plugglearn 同一套写法）
+$act = New-ScheduledTaskAction -Execute 'C:\Program Files\Python311\python.exe' -Argument 'C:\plugglearn\tools\ocr_server.py 8899' -WorkingDirectory 'C:\plugglearn'
+$trg = New-ScheduledTaskTrigger -AtStartup
+$set = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName 'plugglearn-ocr' -Action $act -Trigger $trg -Settings $set -Confirm:$false
+Start-ScheduledTask 'plugglearn-ocr'
+```
+
+验证 `Invoke-WebRequest http://127.0.0.1:8899/health` 回 `{"ok": true, "engine": "ddddocr"}`，
+然后在「设置 → 反爬验证」里粘：
+
+```json
+{"name":"本地 ddddocr","url":"http://127.0.0.1:8899/ocr","method":"POST","data":{"image":"${image}"}}
+```
+
+不装也能用：字形库会随着你手动输入的次数越来越准，只是头几次要自己填。

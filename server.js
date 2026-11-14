@@ -8,6 +8,7 @@ const queue = require('./lib/queue');
 const providers = require('./lib/providers');
 const quiz = require('./lib/quiz');
 const quizRemote = require('./lib/quiz-remote');
+const captcha = require('./lib/captcha');
 const qrLogin = require('./lib/providers/chaoxing-login');
 
 const PORT = Number(process.env.PORT || 8710);
@@ -296,6 +297,101 @@ route('POST', /^\/api\/accounts\/(\d+)\/browser\/close$/, async (req, res, param
   const provider = providers.get(acc.provider);
   const closed = typeof provider.closeSession === 'function' ? await provider.closeSession(acc.id) : false;
   sendJSON(res, 200, { ok: true, closed });
+});
+
+/* ---------- 反爬验证（9010）：自动过验证 + 人工兜底 ---------- */
+
+const captchaRemoteSafeParse = (raw) => quizRemote.parseConfig(raw);
+const accById = (id) => db.prepare('SELECT * FROM accounts WHERE id = ?').get(Number(id));
+
+/** 现在有没有等着人填的验证码 */
+route('GET', /^\/api\/captcha$/, (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const cfg = getJSON('captcha_ocr', null);
+  sendJSON(res, 200, {
+    enabled: get('captcha_enabled', '1') === '1',
+    max_tries: Number(get('captcha_max_tries', 5)),
+    ocr_configured: !!(cfg && cfg.url),
+    ocr_name: (cfg && (cfg.name || cfg.url)) || null,
+    ocr: cfg ? { ...cfg, url: cfg.url, headers: cfg.headers || {}, data: cfg.data || null } : null,
+    bank: captcha.bank.stats(),
+    pending: captcha.listPending(),
+  });
+});
+
+route('POST', /^\/api\/captcha$/, (req, res, params, body) => {
+  if (!requireAdmin(req, res)) return;
+  if (body.enabled !== undefined) set('captcha_enabled', body.enabled ? '1' : '0');
+  if (body.max_tries !== undefined) set('captcha_max_tries', String(Math.max(1, Math.min(10, Number(body.max_tries) || 5))));
+  if (body.ocr !== undefined) {
+    if (body.ocr === null || body.ocr === '') set('captcha_ocr', '');
+    else {
+      let parsed = null;
+      try {
+        parsed = typeof body.ocr === 'string' ? captchaRemoteSafeParse(body.ocr) : body.ocr;
+      } catch (e) {
+        return sendJSON(res, 400, { error: e.message });
+      }
+      if (!parsed || !parsed.url) return sendJSON(res, 400, { error: 'OCR 配置里没有 url' });
+      setJSON('captcha_ocr', parsed);
+    }
+  }
+  sendJSON(res, 200, { ok: true });
+});
+
+/** 拿一张真验证码试一下 OCR 通不通（没有待输入样本时返回说明） */
+route('POST', /^\/api\/captcha\/test$/, async (req, res, params, body) => {
+  if (!requireAdmin(req, res)) return;
+  const cfg = getJSON('captcha_ocr', null);
+  if (!cfg || !cfg.url) return sendJSON(res, 400, { error: '还没配 OCR 服务' });
+  const pend = captcha.listPending();
+  const code = String((body && body.code) || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+  const sample = pend.find((p) => p.dataUrl);
+  if (!sample) return sendJSON(res, 200, { ok: false, note: '暂时没有待识别的验证码图，等下次触发风控时再测；先可以在实际遇到验证页时点「过验证」' });
+  const r = await captcha.queryRemote(cfg, sample.dataUrl);
+  const matched = code ? (r.answer === code) : null;
+  sendJSON(res, 200, { ok: !!r.answer, answer: r.answer || null, expect: code || null, matched, note: r.note || null });
+});
+
+/** 让某个账号立刻尝试自动过一次验证 */
+route('POST', /^\/api\/accounts\/(\d+)\/captcha$/, async (req, res, params) => {
+  if (!requireAdmin(req, res)) return;
+  const acc = accById(params[0]);
+  if (!acc) return sendJSON(res, 404, { error: '账号不存在' });
+  const provider = providers.get(acc.provider);
+  if (typeof provider.solveCaptcha !== 'function') return sendJSON(res, 400, { error: '这个账号不是浏览器路线，没法过验证' });
+  try {
+    const r = await provider.solveCaptcha(acc);
+    sendJSON(res, 200, r || { ok: false, note: '当前不在验证页' });
+  } catch (e) {
+    sendJSON(res, 500, { error: e.message });
+  }
+});
+
+/** 人工输入验证码：提交 + 当样本存进字形库 */
+route('POST', /^\/api\/captcha\/resolve$/, async (req, res, params, body) => {
+  if (!requireAdmin(req, res)) return;
+  const id = Number(body && body.id);
+  const code = String((body && body.code) || '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+  if (code.length !== 4) return sendJSON(res, 400, { error: '验证码是 4 位字母或数字' });
+  const pend = captcha.listPending().find((p) => p.id === id);
+  if (!pend) return sendJSON(res, 404, { error: '这条待输入已经过期，等下次风控再试' });
+  const acc = accById(pend.accountId);
+  if (!acc) return sendJSON(res, 404, { error: '这条待输入关联的账号没了' });
+  const provider = providers.get(acc.provider);
+  if (typeof provider.resolveCaptcha !== 'function') return sendJSON(res, 400, { error: '账号不支持人工过验证' });
+  try {
+    const r = await provider.resolveCaptcha(acc, id, code);
+    sendJSON(res, 200, r);
+  } catch (e) {
+    sendJSON(res, 500, { error: e.message });
+  }
+});
+
+route('DELETE', /^\/api\/captcha\/pending\/(\d+)$/, (req, res, params) => {
+  if (!requireAdmin(req, res)) return;
+  captcha.dropPending(params[0]);
+  sendJSON(res, 200, { ok: true });
 });
 
 /* ---------- 学习通扫码登录（服务端出码，手机扫） ---------- */

@@ -17,6 +17,14 @@
 
 细节见 [DEPLOY.md](DEPLOY.md)。
 
+---|---|
+| 工作台 | https://your-host.example.com/ |
+| 客户前台 | https://your-host.example.com/app |
+| 主机 | 阿里云 一台 ECS（Windows Server 2022，与 EasyRun 同机） |
+| 端口 | 8710（本机回环），对外由 Caddy 终结 TLS 走 443 |
+
+证书由 Caddy 自动申请续期（Let's Encrypt），详见 [DEPLOY.md](DEPLOY.md) 的「HTTPS 入口」一节。
+
 ---
 
 ## 1. 快速开始
@@ -202,7 +210,8 @@ plugglearn/
   | 学习通 · 接口路线 | 纯 HTTP 刷视频进度，轻量但答不了题，超星改版容易失效 |
   | 模拟环境 | 不联网，跑流程用 |
 - 题库：`/api/quiz`，缺题自动记录在 `quiz_misses`，补一次答案就进库。
-- 细节见 [docs/QUIZ.md](docs/QUIZ.md)（扫码链路）与 [docs/BROWSER.md](docs/BROWSER.md)（浏览器路线与选择器）。
+- **自动过验证**：被超星 9010 风控拦到图片验证码时，先查本地字形库（每次成功都回流样本），再用外部 OCR（自带 `tools/ocr_server.py`，包 ddddocr），都不行才登记人工输入。开关与次数在「设置 → 反爬验证」。
+- 细节见 [docs/QUIZ.md](docs/QUIZ.md)（扫码链路）与 [docs/BROWSER.md](docs/BROWSER.md)（浏览器路线、选择器、第 12 节讲验证码）。
 
 ## 手机端
 

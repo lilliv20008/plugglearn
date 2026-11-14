@@ -313,6 +313,38 @@ code.inline { background: rgba(0,0,0,.05); padding: 2px 6px; border-radius: 6px;
   word-break: break-all;
 }
 
+/* ---------- 反爬验证码待输入 ---------- */
+.cap-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card-2);
+  margin-bottom: 8px;
+}
+.cap-item img {
+  height: 44px;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px solid var(--line);
+}
+.cap-input {
+  width: 96px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  font: 600 15px/1 ui-monospace, Consolas, monospace;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+}
+.cap-note { flex: 1 1 100%; }
+
 /* ---------- 手机端（≤720px） ---------- */
 @media (max-width: 720px) {
   body { font-size: 14px; }

@@ -281,7 +281,7 @@ async function renderAccounts() {
             <td class="small" data-label="接入方式">${a.has_cookie ? '<span class="pill ok">Cookie</span>' : '<span class="pill warn">未导入</span>'}</td>
             <td class="num act" data-label="操作">
               <button class="btn tiny" data-action="account-check" data-id="${a.id}">检测</button>
-              ${a.provider === 'chaoxing-browser' ? `<button class="btn tiny" data-action="account-probe" data-id="${a.id}">看页面</button>` : ''}
+              ${a.provider === 'chaoxing-browser' ? `<button class="btn tiny" data-action="account-probe" data-id="${a.id}">看页面</button><button class="btn tiny" data-action="account-captcha" data-id="${a.id}">过验证</button>` : ''}
               <button class="btn tiny" data-action="account-edit" data-id="${a.id}">编辑</button>
               <button class="btn tiny danger" data-action="account-del" data-id="${a.id}">删除</button>
             </td>
@@ -323,6 +323,15 @@ async function renderAccounts() {
             <button class="btn primary" data-action="modal-close">关闭</button>
           </div>`);
         bindActions({ 'account-browser-close': async (id) => { await api(`/api/accounts/${id}/browser/close`, { method: 'POST' }); closeModal(); toast('浏览器已关闭'); } });
+      } catch (e) { toast(e.message, true); }
+    },
+    'account-captcha': async (bid) => {
+      toast('正在尝试过验证…');
+      try {
+        const r = await api(`/api/accounts/${bid}/captcha`, { method: 'POST' });
+        if (r.ok) toast(`已通过（${r.source} → ${r.code}）`);
+        else if (r.needManual) { toast('需要你输入一次，去「设置 → 反爬验证」填'); renderSettings && null; }
+        else toast(r.note || '当前没在验证页', false);
       } catch (e) { toast(e.message, true); }
     },
     'account-del': async (bid) => {
@@ -755,6 +764,27 @@ async function renderSettings() {
       </div>
     </div>
 
+    <div class="card pad" style="margin-top:14px">
+      <div style="font-weight:640;margin-bottom:6px">反爬验证（9010）</div>
+      <div class="small muted" style="margin-bottom:12px">
+        被学习通风控拦下时会自动过一次图片验证码：先用本地字形库（用得越久越准），不放心再问外部 OCR，
+        都不行才登记人工输入——填一次就等于给库加了 4 个样本。
+      </div>
+      <div class="row" style="gap:10px;align-items:center">
+        <label class="switch" style="margin:0"><input type="checkbox" id="s_cap_on"><span>自动过验证</span></label>
+        <label class="field" style="max-width:140px;margin:0"><span>最多试几次</span><input id="s_cap_tries" type="number" min="1" max="10"></label>
+        <span class="small muted" id="s_cap_state">读取中…</span>
+      </div>
+      <label class="field" style="margin-top:12px"><span>外部 OCR 配置（可留空）</span><textarea id="s_cap_cfg" class="mono" rows="4" placeholder='{"url":"http://127.0.0.1:8899/ocr","method":"POST","data":{"image":"\${image}"}}'></textarea></label>
+      <div class="row" style="gap:8px;align-items:center;margin-top:10px">
+        <button class="btn" id="s_cap_import">导入 OCR</button>
+        <button class="btn ghost" id="s_cap_test">测试一次</button>
+        <button class="btn ghost" id="s_cap_refresh">刷新状态</button>
+        <span class="small muted">本地 OCR：<code class="inline">pip install ddddocr</code> 后跑 <code class="inline">py tools/ocr_server.py</code></span>
+      </div>
+      <div id="s_cap_pending" style="margin-top:12px"></div>
+    </div>
+
     <div class="row" style="margin-top:14px">
       <button class="btn primary" id="s_save">保存设置</button>
       <span class="small muted">修改后立即生效，无需重启</span>
@@ -806,6 +836,72 @@ async function renderSettings() {
       await api('/api/quiz/remote', { method: 'POST', body: { enabled: $('#s_qr_on').checked } });
       toast($('#s_qr_on').checked ? '远程题库已启用' : '远程题库已停用');
       qrRefresh();
+    } catch (e) { toast(e.message, true); }
+  };
+
+  /* ---- 反爬验证 ---- */
+  async function capRefresh() {
+    try {
+      const r = await api('/api/captcha');
+      $('#s_cap_on').checked = !!r.enabled;
+      $('#s_cap_tries').value = r.max_tries || 5;
+      $('#s_cap_state').textContent = `${r.ocr_configured ? 'OCR：' + (r.ocr_name || '已配置') : '未配外部 OCR'} · 字形库 ${r.bank.samples} 组`;
+      if (r.ocr && r.ocr.url && !$('#s_cap_cfg').value) {
+        $('#s_cap_cfg').value = JSON.stringify([{
+          name: r.ocr.name || 'OCR', url: r.ocr.url, method: String(r.ocr.method || 'POST').toLowerCase(),
+          headers: r.ocr.headers || { 'Content-Type': 'application/json' }, data: r.ocr.data || { image: '${image}' },
+        }], null, 2);
+      }
+      const box = $('#s_cap_pending');
+      if (!r.pending.length) { box.innerHTML = '<div class="small muted">现在没有等着输入的验证码。</div>'; return; }
+      box.innerHTML = r.pending.map((p) => `
+        <div class="cap-item" data-cap-id="${p.id}">
+          <img src="${p.dataUrl}" alt="验证码">
+          <input class="cap-input" maxlength="4" placeholder="4 位" autocomplete="off">
+          <button class="btn tiny" data-cap="${p.id}">提交</button>
+          <button class="btn tiny ghost" data-capdrop="${p.id}">忽略</button>
+          <div class="small muted cap-note">${esc(p.note || '')}</div>
+        </div>`).join('');
+      box.querySelectorAll('[data-cap]').forEach((b) => {
+        b.onclick = async () => {
+          const item = b.closest('.cap-item');
+          const code = (item.querySelector('.cap-input').value || '').trim().toUpperCase();
+          if (code.length !== 4) return toast('要 4 位字母或数字', true);
+          try {
+            const out = await api('/api/captcha/resolve', { method: 'POST', body: { id: Number(b.dataset.cap), code } });
+            toast(out.ok ? '验证通过，样本已入库' : (out.note || '没通过'), !out.ok);
+            capRefresh();
+          } catch (e) { toast(e.message, true); }
+        };
+      });
+      box.querySelectorAll('[data-capdrop]').forEach((b) => {
+        b.onclick = async () => {
+          try { await api(`/api/captcha/pending/${b.dataset.capdrop}`, { method: 'DELETE' }); capRefresh(); } catch (e) { toast(e.message, true); }
+        };
+      });
+    } catch (e) { $('#s_cap_state').textContent = '读取失败：' + e.message; }
+  }
+  capRefresh();
+
+  $('#s_cap_refresh').onclick = () => capRefresh();
+  $('#s_cap_on').onchange = async () => {
+    try {
+      await api('/api/captcha', { method: 'POST', body: { enabled: $('#s_cap_on').checked } });
+      capRefresh();
+    } catch (e) { toast(e.message, true); }
+  };
+  $('#s_cap_import').onclick = async () => {
+    const raw = $('#s_cap_cfg').value.trim();
+    try {
+      await api('/api/captcha', { method: 'POST', body: { ocr: raw || null } });
+      toast(raw ? 'OCR 配置已保存' : 'OCR 配置已清空');
+      capRefresh();
+    } catch (e) { toast(e.message, true); }
+  };
+  $('#s_cap_test').onclick = async () => {
+    try {
+      const r = await api('/api/captcha/test', { method: 'POST', body: {} });
+      toast(r.ok ? `OCR 认出：${r.answer}` : (r.note || '没结果'), !r.ok);
     } catch (e) { toast(e.message, true); }
   };
 }

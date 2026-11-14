@@ -215,3 +215,19 @@ https://mooc1.chaoxing.com/antispiderShowVerify.ac
 
 早期版本在「没有 video 元素」时会计入 `idleTicks`，6 拍后当成功处理，结果被风控页骗了 11 个任务记为 done。
 现在只要 `roots <= 2`（页面基本是空的）就直接报「学习页没加载出来」，同样会暂停队列，不再假完成。
+
+## 12. 自动过验证（9010 图片验证码）
+
+被踢到 `antispiderShowVerify.ac` 时不再直接停下来等人，而是按三层顺序自己过：
+
+| 顺序 | 方式 | 说明 |
+| --- | --- | --- |
+| 1 | 本地字形库 `lib/captcha-bank.js` | 把一个字符切成 16×20 二值格子做特征，汉明距离最近邻；每次成功（自动或人工）都会把这 4 个字符入库，用得越久越准 |
+| 2 | 外部 OCR（`lib/captcha.js` 的 `queryRemote`） | 可配任意 HTTP 服务，默认给 `tools/ocr_server.py`（包 ddddocr），本机实测 12/14 正确 |
+| 3 | 人工兜底 | 走不通就登记到「设置 → 反爬验证」的待输入列表，填一次=给库加 4 个样本 |
+
+- 切图：按 `img` 的 src 命中 `processVerifyPng`，找不到就挑「宽 80–400、高 20–140、宽高比 ≥1.8」的小图；canvas 读像素 → Otsu 二值化 → 3×3 去噪 → 列投影切 4 段。
+- 提交：`GET /html/processVerify.ac?app=0&ucode=XXXX`，回读 URL 仍命中验证页就算错，最多 `max_tries`（默认 5）次。
+- 开关与次数在设置页，接口是 `GET/POST /api/captcha`、`POST /api/captcha/test`、`POST /api/accounts/:id/captcha`（手动点「过验证」）、`POST /api/captcha/resolve`（人工输入）。
+- 起 OCR 服务：`pip install ddddocr` 后 `python tools/ocr_server.py 8899`，`GET /health` 回 `{"ok":true,"engine":"ddddocr"}`；服务器上已注册成开机任务 `plugglearn-ocr`（SYSTEM）。
+- 只有这一层也过不去（比如账号已被要求短信验证）才会照旧抛「超星要求人工验证」，队列自动暂停。
