@@ -146,7 +146,18 @@ function renderQueue(q) {
   const text = $('#queueText');
   if (!q) return;
   dot.className = 'dot' + (q.paused ? '' : q.running > 0 ? ' busy' : ' on');
-  text.textContent = q.paused ? '调度器已暂停' : q.running > 0 ? `执行中 ${q.running} / 并发 ${q.concurrency}` : '调度器空闲';
+  let resumeTip = '';
+  if (q.paused && q.resume_at) {
+    const d = new Date(q.resume_at);
+    if (!Number.isNaN(d.getTime())) {
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      resumeTip = ` · ${hh}:${mm} 自动恢复`;
+    }
+  }
+  text.textContent = q.paused
+    ? '调度器已暂停' + resumeTip
+    : q.running > 0 ? `执行中 ${q.running} / 并发 ${q.concurrency}` : '调度器空闲';
   $('#pauseBtn').textContent = q.paused ? '恢复调度' : '暂停调度';
 }
 
@@ -203,11 +214,11 @@ async function renderOverview() {
       </div>
     </div>
     <div class="grid k4">
-      ${cards.map(([label, value, foot, cls]) => `
+      ${cards.map(([label, value, foot, cls], i) => `
         <div class="card stat ${cls}">
           <div class="stat-label">${label}</div>
-          <div class="stat-value">${value}</div>
-          <div class="stat-foot">${foot}</div>
+          <div class="stat-value" data-stat="${i}">${value}</div>
+          <div class="stat-foot" data-stat-foot="${i}">${foot}</div>
         </div>`).join('')}
     </div>
 
@@ -282,6 +293,7 @@ async function renderAccounts() {
             <td class="num act" data-label="操作">
               <button class="btn tiny" data-action="account-check" data-id="${a.id}">检测</button>
               ${a.provider === 'chaoxing-browser' ? `<button class="btn tiny" data-action="account-probe" data-id="${a.id}">看页面</button><button class="btn tiny" data-action="account-captcha" data-id="${a.id}">过验证</button>` : ''}
+              ${a.provider === 'chaoxing' ? `<button class="btn tiny" data-action="account-to-browser" data-id="${a.id}">改用浏览器</button>` : ''}
               <button class="btn tiny" data-action="account-edit" data-id="${a.id}">编辑</button>
               <button class="btn tiny danger" data-action="account-del" data-id="${a.id}">删除</button>
             </td>
@@ -307,6 +319,15 @@ async function renderAccounts() {
       try {
         const r = await api(`/api/accounts/${bid}/check`, { method: 'POST' });
         toast(`${r.ok ? '在线' : '异常'}：${r.note}`, !r.ok);
+        renderAccounts();
+      } catch (e) { toast(e.message, true); }
+    },
+    'account-to-browser': async (bid) => {
+      toast('正在切换到浏览器路线…');
+      try {
+        await api(`/api/accounts/${bid}`, { method: 'PATCH', body: { provider: 'chaoxing-browser' } });
+        const r = await api(`/api/accounts/${bid}/check`, { method: 'POST' });
+        toast(`${r.ok ? '已切到浏览器路线 · 在线' : '已切换，检测未通过'}：${r.note}`, !r.ok);
         renderAccounts();
       } catch (e) { toast(e.message, true); }
     },
@@ -352,8 +373,8 @@ function accountForm(acc = null) {
       <label class="field"><span>备注名</span><input id="f_label" value="${esc(p.label || '')}" placeholder="张三 · 2024级"></label>
       <label class="field"><span>提供方</span>
         <select id="f_provider">
-          <option value="chaoxing-browser" ${p.provider === 'chaoxing-browser' ? 'selected' : ''}>学习通 · 浏览器路线（能自动答题）</option>
-          <option value="chaoxing" ${(!p.provider || p.provider === 'chaoxing') ? 'selected' : ''}>学习通 · 接口路线（只刷进度）</option>
+          <option value="chaoxing-browser" ${(!p.provider || p.provider === 'chaoxing-browser') ? 'selected' : ''}>学习通 · 浏览器路线（推荐，能自动答题）</option>
+          <option value="chaoxing" ${p.provider === 'chaoxing' ? 'selected' : ''}>学习通 · 接口路线（只刷进度，易被 403 拦）</option>
           <option value="sim" ${p.provider === 'sim' ? 'selected' : ''}>模拟环境</option>
         </select>
       </label>
@@ -606,14 +627,73 @@ function planForm(plan, accounts) {
 
 /* ------------------------------ 任务 ------------------------------ */
 
+function taskRowHTML(t) {
+  return `<tr data-id="${t.id}">
+      <td data-label="任务"><b>${esc(t.title || t.unit_id)}</b><div class="small muted">${esc(t.course_name || '')}</div></td>
+      <td class="small" data-label="账号">${esc(t.account_label || '—')}</td>
+      <td data-label="状态"><span class="pill-wrap">${statusPill(t.status)}</span>${t.error ? `<div class="small muted row-err" title="${esc(t.error)}">${esc(t.error.slice(0, 42))}</div>` : ''}</td>
+      <td data-label="进度"><div class="bar ${t.status === 'done' ? 'done' : t.status === 'failed' ? 'fail' : ''}"><i style="width:${t.progress}%"></i></div>
+          <div class="small muted row-pct">${Math.round(t.progress)}%${t.finished_at && t.started_at ? ` · ${fmtDur(t.started_at, t.finished_at)}` : ''}</div></td>
+      <td class="num small muted" data-label="尝试">${t.attempts}</td>
+      <td class="num act" data-label="操作">
+        <button class="btn tiny" data-action="task-retry" data-id="${t.id}">重试</button>
+        <button class="btn tiny" data-action="task-skip" data-id="${t.id}">跳过</button>
+      </td>
+    </tr>`;
+}
+
+/** 已有表格时就地打补丁：只改变化的行，不整表重建（500 行重建会卡） */
+function patchTaskRows(tasks) {
+  const tb = document.querySelector('#taskBody');
+  if (!tb) return false;
+  const seen = new Set();
+  tasks.forEach((t, i) => {
+    const id = String(t.id);
+    seen.add(id);
+    let tr = tb.querySelector(`tr[data-id="${id}"]`);
+    if (!tr) {
+      const tmp = document.createElement('tbody');
+      tmp.innerHTML = taskRowHTML(t);
+      tr = tmp.firstElementChild;
+      tb.appendChild(tr);
+    }
+    const pill = tr.querySelector('.pill-wrap');
+    const wantPill = statusPill(t.status);
+    if (pill && pill.innerHTML !== wantPill) pill.innerHTML = wantPill;
+    const bar = tr.querySelector('.bar');
+    if (bar) {
+      const cls = 'bar' + (t.status === 'done' ? ' done' : t.status === 'failed' ? ' fail' : '');
+      if (bar.className !== cls) bar.className = cls;
+      const fill = bar.querySelector('i');
+      const w = Math.round(t.progress) + '%';
+      if (fill && fill.style.width !== w) fill.style.width = w;
+    }
+    const pct = tr.querySelector('.row-pct');
+    const wantPct = `${Math.round(t.progress)}%${t.finished_at && t.started_at ? ` · ${fmtDur(t.started_at, t.finished_at)}` : ''}`;
+    if (pct && pct.textContent !== wantPct) pct.textContent = wantPct;
+    const cur = tb.children[i];
+    if (cur !== tr) tb.insertBefore(tr, cur || null);
+  });
+  [...tb.children].forEach((tr) => { if (!seen.has(tr.dataset.id)) tr.remove(); });
+  return true;
+}
+
+const TASK_PAGE = 120;
+
 async function renderTasks() {
   const qs = state.taskFilter ? `?status=${encodeURIComponent(state.taskFilter)}&limit=300` : '?limit=300';
   const tasks = await api('/api/tasks' + qs);
   state.tasks = tasks;
   const counts = tasks.reduce((acc, t) => (acc[t.status] = (acc[t.status] || 0) + 1, acc), {});
+  // 表格已经渲染过：只打补丁，保住滚动位置
+  if (patchTaskRows(tasks.slice(0, state.taskShown || TASK_PAGE))) {
+    const sub = document.querySelector('#taskSub');
+    if (sub) sub.textContent = `${tasks.length} 条 · 失败 ${counts.failed || 0} · 执行中 ${counts.running || 0}`;
+    return;
+  }
   $('#main').innerHTML = `
     <div class="page-head">
-      <div><h1 class="page-title">任务</h1><p class="page-sub">${tasks.length} 条 · 失败 ${counts.failed || 0} · 执行中 ${counts.running || 0}</p></div>
+      <div><h1 class="page-title">任务</h1><p class="page-sub" id="taskSub">${tasks.length} 条 · 失败 ${counts.failed || 0} · 执行中 ${counts.running || 0}</p></div>
       <div class="page-actions">
         <div class="seg" id="taskSeg">
           ${[['', '全部'], ['pending', '待执行'], ['running', '执行中'], ['done', '已完成'], ['failed', '失败']].map(([v, l]) =>
@@ -641,11 +721,19 @@ async function renderTasks() {
     </div>`;
 
   $('#taskSeg').querySelectorAll('button').forEach((b) => {
-    b.onclick = () => { state.taskFilter = b.dataset.filter; renderTasks(); };
+    b.onclick = () => { state.taskFilter = b.dataset.filter; state.taskShown = TASK_PAGE; renderTasks(); };
   });
+  bindTaskActions();
+}
+
+function bindTaskActions() {
   bindActions({
     'task-retry': async (id) => { await api(`/api/tasks/${id}/retry`, { method: 'POST' }); toast('已重新排队'); renderTasks(); },
     'task-skip': async (id) => { await api(`/api/tasks/${id}/skip`, { method: 'POST' }); renderTasks(); },
+    'task-more': () => {
+      state.taskShown = (document.querySelectorAll('#taskBody tr').length || TASK_PAGE) + TASK_PAGE;
+      return renderTasks();
+    },
     'retry-failed': async () => {
       const r = await api('/api/tasks/retry-failed', { method: 'POST' });
       toast(`已重新排队 ${r.count} 个任务`);
@@ -930,12 +1018,40 @@ boot().catch((e) => {
   document.body.innerHTML = `<div class="empty"><div class="empty-title">无法连接服务</div>${esc(e.message)}</div>`;
 });
 
+function overviewNumbers(s) {
+  const st = s.by_status || {};
+  const vals = [
+    [st.pending || 0, '排队中的任务点'],
+    [st.running || 0, `全局并发 ${s.queue.concurrency}`],
+    [s.today_done, '按任务点统计'],
+    [st.failed || 0, `今日错误 ${s.today_error}`],
+  ];
+  document.querySelectorAll('[data-stat]').forEach((el) => {
+    const i = Number(el.dataset.stat);
+    if (!vals[i]) return;
+    const v = String(vals[i][0]);
+    if (el.textContent !== v) el.textContent = v;
+    const foot = document.querySelector(`[data-stat-foot="${i}"]`);
+    if (foot && foot.textContent !== vals[i][1]) foot.textContent = vals[i][1];
+  });
+}
+
+let polling = false;
 setInterval(async () => {
-  if ($('#shell').hidden) return;
+  if ($('#shell').hidden || document.hidden || polling) return;
+  if (document.querySelector('.modal-wrap:not([hidden])')) return; // 弹窗开着别刷，免得打断输入
+  polling = true;
   try {
     const s = await api('/api/stats');
     renderQueue(s.queue);
     const key = (location.hash.replace(/^#\/?/, '') || 'overview');
-    if (key === 'overview' || key === 'tasks') route();
+    if (key === 'overview') {
+      // 概览：有卡片就只改数字，页面不重建（滚动位置保住）
+      if (document.querySelector('[data-stat]')) overviewNumbers(s);
+      else route();
+    } else if (key === 'tasks') {
+      route();
+    }
   } catch { /* 忽略轮询错误 */ }
-}, 8000);
+  finally { polling = false; }
+}, 12000);
